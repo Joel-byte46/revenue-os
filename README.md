@@ -4,6 +4,7 @@ Here, a simple layer engineer an autonoumous CFO just for you
 
 # Arbo
 
+```text
 revenue-os/
 │
 ├── supabase/
@@ -67,3 +68,4 @@ revenue-os/
 │
 └── nango/
     └── docker-compose.yml
+```
