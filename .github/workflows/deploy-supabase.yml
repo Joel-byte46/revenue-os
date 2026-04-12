@@ -1,0 +1,60 @@
+# .github/workflows/deploy-supabase.yml
+name: Deploy Revenue OS to Supabase Cloud
+
+on:
+  push:
+    branches:
+      - main           # Se déclenche sur chaque push sur main
+  workflow_dispatch:    # Permet aussi de lancer manuellement depuis l'onglet "Actions" GitHub
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Database + Edge Functions
+    
+    steps:
+      # 1. Récupère le code du repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Installe la CLI Supabase (gestionnaire officiel)
+      - name: Install Supabase CLI
+        run: npm install -g supabase@">=1.100.0"
+
+      # 3. Lie le projet distant (Authentification non-interactive via Access Token)
+      # Cette commande associe ton code local au vrai projet Supabase Cloud
+      - name: Link to Supabase Project
+        run: |
+          supabase link \
+            --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" \
+            --access-token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+        env:
+          # Important pour éviter les prompts interactifs en CI
+          SUPABASE_NO_UPDATE_NOTIFIER: true
+
+      # 4. Pousse les MIGRATIONS SQL (Schéma de base de données)
+      # Exécute tout fichier nouveau dans supabase/migrations/
+      - name: Push Database Migrations
+        run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+
+      # 5. Déploie les EDGE FUNCTIONS (Code TypeScript/Deno)
+      # Compile et pousse les agents vers le runtime Supabase
+      - name: Deploy Edge Functions
+        run: |
+          supabase functions deploy \
+            --no-verify-jwt \        # Le JWT est géré par Supabase lui-même, 
+                                      # pas besoin de vérifier côté fonction pour le deploiement
+            --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+        env:
+          SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+
+      # 6. (Optionnel) Notification Slack si succès/échec
+      - name: Notify Success
+        if: success()
+        run: echo "🚀 Revenue OS deployed successfully to Supabase Cloud"
+      
+      - name: Notify Failure
+        if: failure()
+        run: echo "❌ Deployment failed. Check the logs above."
