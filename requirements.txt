@@ -30,4 +30,4 @@ structlog==24.1.0
 # Tests
 pytest==8.0.1
 pytest-asyncio==0.23.5
-httpx==0.26.0
+httpx==0.25.2
