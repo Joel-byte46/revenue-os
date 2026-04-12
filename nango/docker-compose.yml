@@ -1,0 +1,141 @@
+# ============================================================
+# REVENUE OS — NANGO SELF-HOSTED
+# OAuth manager pour toutes les intégrations
+# Déployer sur VPS Hetzner CX11 (4$/mois)
+# ============================================================
+
+version: "3.8"
+
+services:
+
+  # ----------------------------------------------------------
+  # NANGO SERVER
+  # Gère l'OAuth flow et le stockage des tokens
+  # ----------------------------------------------------------
+  nango-server:
+    image: nangohq/nango:latest
+    container_name: revenue-os-nango
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      # Clé secrète pour sécuriser l'API Nango
+      # Générer avec : openssl rand -hex 32
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
+
+      # Base de données Nango (Postgres séparé)
+      # Utiliser une DB séparée de Supabase
+      DATABASE_URL: ${NANGO_DATABASE_URL}
+
+      # URL publique du serveur Nango
+      # Doit être accessible depuis internet pour les callbacks OAuth
+      NANGO_SERVER_URL: ${NANGO_SERVER_URL}
+      # Ex: https://nango.votre-domaine.com
+
+      # URL de callback OAuth (reçoit les codes d'autorisation)
+      NANGO_CALLBACK_URL: ${NANGO_SERVER_URL}/oauth/callback
+
+      # Environnement
+      NODE_ENV: production
+
+      # Logs
+      LOG_LEVEL: warn
+
+    volumes:
+      # Persistance des données Nango
+      - nango_data:/app/data
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ----------------------------------------------------------
+  # POSTGRES pour Nango
+  # DB séparée de Supabase, uniquement pour Nango
+  # ----------------------------------------------------------
+  nango-db:
+    image: postgres:15-alpine
+    container_name: revenue-os-nango-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nango
+      POSTGRES_USER: nango
+      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD}
+    volumes:
+      - nango_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nango"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  nango_data:
+  nango_db_data:
+
+# ============================================================
+# SETUP INSTRUCTIONS
+# ============================================================
+#
+# 1. Créer le fichier .env sur le VPS :
+#
+#    NANGO_SECRET_KEY=<openssl rand -hex 32>
+#    NANGO_DATABASE_URL=postgresql://nango:<password>@nango-db:5432/nango
+#    NANGO_SERVER_URL=https://nango.votre-domaine.com
+#    NANGO_DB_PASSWORD=<mot de passe fort>
+#
+# 2. Lancer :
+#    docker-compose up -d
+#
+# 3. Configurer les providers dans l'UI Nango :
+#    https://nango.votre-domaine.com
+#
+#    Providers à configurer (avec client_id + client_secret) :
+#    - hubspot
+#    - salesforce
+#    - pipedrive
+#    - close
+#    - attio
+#    - stripe (API key, pas OAuth)
+#    - plaid
+#    - tink
+#    - meta-ads
+#    - google-ads
+#    - linkedin-ads
+#    - tiktok-ads
+#    - quickbooks
+#    - xero
+#    - pennylane
+#    - slack
+#    - gmail (Google OAuth)
+#    - google-calendar
+#    - calendly
+#
+# 4. Stocker la clé Nango dans Supabase :
+#    supabase secrets set NANGO_SECRET_KEY=<ta clé>
+#    supabase secrets set NANGO_SERVER_URL=https://nango.votre-domaine.com
+#
+# 5. Vérifier que le healthcheck passe :
+#    docker-compose ps
+#
+# ============================================================
+# CADDY (reverse proxy + HTTPS automatique)
+# Ajouter ce fichier Caddyfile sur le VPS
+# ============================================================
+#
+# nango.votre-domaine.com {
+#   reverse_proxy nango-server:3003
+# }
+#
+# Lancer Caddy :
+# docker run -d \
+#   --name caddy \
+#   --network host \
+#   -v /path/to/Caddyfile:/etc/caddy/Caddyfile \
+#   -v caddy_data:/data \
+#   caddy:alpine
+#
+# ============================================================
