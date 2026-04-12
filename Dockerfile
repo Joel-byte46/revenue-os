@@ -48,7 +48,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 
 # Copier le code source
-COPY --chown=appuser:appuser main.py treasury.py anomaly.py ./
+COPY --chown=appuser:appuser python/main.py python/treasury.py python/anomaly.py ./
 
 # Utiliser l'utilisateur non-root
 USER appuser
