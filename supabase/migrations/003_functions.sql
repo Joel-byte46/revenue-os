@@ -1,0 +1,419 @@
+-- ============================================================
+-- REVENUE OS — FONCTIONS SQL
+-- Migration 003 : Toute la logique métier en SQL pur
+-- Ces fonctions sont appelées par les Edge Functions.
+-- JAMAIS appelées directement par le LLM.
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- PIPELINE HEALTH
+-- Appelée par A2 et A6
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_pipeline_health(p_tenant_id UUID)
+RETURNS JSON
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT json_build_object(
+    'total_deals',
+    COUNT(*) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+    ),
+    'total_value',
+    COALESCE(SUM(amount) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+    ), 0),
+    'stagnant_count',
+    COUNT(*) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+      AND days_stagnant > 14
+    ),
+    'stagnant_value',
+    COALESCE(SUM(amount) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+      AND days_stagnant > 14
+    ), 0),
+    'critical_count',
+    COUNT(*) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+      AND days_stagnant > 30
+    ),
+    'avg_deal_size',
+    COALESCE(AVG(amount) FILTER (
+      WHERE stage NOT IN ('closed_won', 'closed_lost')
+    ), 0),
+    'deals_closed_30d',
+    COUNT(*) FILTER (
+      WHERE stage = 'closed_won'
+      AND updated_at > NOW() - INTERVAL '30 days'
+    ),
+    'revenue_closed_30d',
+    COALESCE(SUM(amount) FILTER (
+      WHERE stage = 'closed_won'
+      AND updated_at > NOW() - INTERVAL '30 days'
+    ), 0)
+  )
+  FROM deals
+  WHERE tenant_id = p_tenant_id
+$$;
+
+-- ------------------------------------------------------------
+-- STAGNANT DEALS
+-- Retourne les deals bloqués avec leur score de criticité.
+-- Appelée par A2.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_stagnant_deals(
+  p_tenant_id       UUID,
+  p_limit           INT DEFAULT 10
+)
+RETURNS TABLE (
+  id                UUID,
+  title             TEXT,
+  amount            NUMERIC,
+  currency          TEXT,
+  stage             TEXT,
+  stage_raw         TEXT,
+  days_stagnant     INT,
+  contact_email     TEXT,
+  contact_name      TEXT,
+  company_name      TEXT,
+  notes             TEXT,
+  raw_data          JSONB,
+  criticality_score NUMERIC
+)
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  WITH thresholds AS (
+    SELECT
+      unnest(ARRAY['new','qualified','demo_done',
+                   'proposal_sent','negotiation']) AS stage_name,
+      unnest(ARRAY[3, 7, 10, 14, 21])              AS threshold_days
+  ),
+  scored_deals AS (
+    SELECT
+      d.id,
+      d.title,
+      d.amount,
+      d.currency,
+      d.stage,
+      d.stage_raw,
+      d.days_stagnant,
+      d.contact_email,
+      d.contact_name,
+      d.company_name,
+      d.notes,
+      d.raw_data,
+      -- Score de criticité : plus le deal vaut cher et est bloqué longtemps,
+      -- plus il est prioritaire
+      (d.amount * COALESCE(d.days_stagnant, 0))::NUMERIC AS criticality_score,
+      t.threshold_days
+    FROM deals d
+    LEFT JOIN thresholds t ON t.stage_name = d.stage
+    WHERE d.tenant_id = p_tenant_id
+      AND d.stage NOT IN ('closed_won', 'closed_lost', 'unknown')
+      AND d.last_activity_at IS NOT NULL
+      AND COALESCE(d.days_stagnant, 0) > COALESCE(t.threshold_days, 14)
+  )
+  SELECT
+    id, title, amount, currency, stage, stage_raw,
+    days_stagnant, contact_email, contact_name,
+    company_name, notes, raw_data, criticality_score
+  FROM scored_deals
+  ORDER BY criticality_score DESC
+  LIMIT p_limit
+$$;
+
+-- ------------------------------------------------------------
+-- DORMANT LEADS
+-- Leads qui avaient du potentiel mais sont devenus silencieux.
+-- Appelée par A3.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_dormant_leads(
+  p_tenant_id     UUID,
+  p_min_days      INT DEFAULT 30,
+  p_max_days      INT DEFAULT 180,
+  p_min_score     INT DEFAULT 50
+)
+RETURNS TABLE (
+  id              UUID,
+  email           TEXT,
+  first_name      TEXT,
+  last_name       TEXT,
+  company         TEXT,
+  industry        TEXT,
+  company_size    TEXT,
+  total_score     INT,
+  status          TEXT,
+  days_silent     INT
+)
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT
+    id,
+    email,
+    first_name,
+    last_name,
+    company,
+    industry,
+    company_size,
+    total_score,
+    status,
+    EXTRACT(DAY FROM NOW() - updated_at)::INT AS days_silent
+  FROM leads
+  WHERE tenant_id = p_tenant_id
+    AND status NOT IN (
+      'won', 'lost', 'unsubscribed', 'disqualified', 'in_sequence'
+    )
+    AND total_score >= p_min_score
+    AND EXTRACT(DAY FROM NOW() - updated_at) >= p_min_days
+    AND EXTRACT(DAY FROM NOW() - updated_at) <= p_max_days
+  ORDER BY total_score DESC, updated_at ASC
+$$;
+
+-- ------------------------------------------------------------
+-- MONTHLY EXPENSE SUMMARY
+-- Appelée par le service Python pour le calcul du burn.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_monthly_expense_summary(
+  p_tenant_id UUID,
+  p_months    INT DEFAULT 6
+)
+RETURNS TABLE (
+  month_label   TEXT,
+  total_expense NUMERIC,
+  breakdown     JSONB
+)
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT
+    TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month_label,
+    ABS(SUM(amount)) AS total_expense,
+    jsonb_object_agg(
+      COALESCE(category, 'unknown'),
+      ABS(SUM(amount))
+    ) AS breakdown
+  FROM transactions
+  WHERE tenant_id = p_tenant_id
+    AND type = 'expense'
+    AND date >= DATE_TRUNC('month', NOW() - (p_months || ' months')::INTERVAL)
+  GROUP BY DATE_TRUNC('month', date)
+  ORDER BY DATE_TRUNC('month', date) ASC
+$$;
+
+-- ------------------------------------------------------------
+-- MRR CALCULATION
+-- Appelée par Python Treasury.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION calculate_mrr(p_tenant_id UUID)
+RETURNS NUMERIC
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT
+    COALESCE(
+      SUM(ABS(amount)) / 3.0,
+      0
+    )
+  FROM transactions
+  WHERE tenant_id = p_tenant_id
+    AND type = 'revenue'
+    AND is_recurring = TRUE
+    AND date >= NOW() - INTERVAL '90 days'
+$$;
+
+-- ------------------------------------------------------------
+-- WEIGHTED PIPELINE (forecast)
+-- Probabilités par étape × montant deal.
+-- Appelée par Python Treasury et A2.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_weighted_pipeline(
+  p_tenant_id UUID,
+  p_days      INT DEFAULT 30
+)
+RETURNS JSON
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  WITH stage_weights AS (
+    SELECT
+      unnest(ARRAY['new','qualified','demo_done',
+                   'proposal_sent','negotiation']) AS stage_name,
+      unnest(ARRAY[0.05, 0.20, 0.35, 0.55, 0.80]) AS weight
+  )
+  SELECT json_build_object(
+    'total_weighted_value',
+    COALESCE(SUM(d.amount * COALESCE(sw.weight, 0.1)), 0),
+    'expected_30d_revenue',
+    COALESCE(SUM(
+      CASE
+        WHEN d.close_date <= CURRENT_DATE + p_days
+        THEN d.amount * COALESCE(sw.weight, 0.1)
+        ELSE 0
+      END
+    ), 0),
+    'deal_count',
+    COUNT(*) FILTER (
+      WHERE d.stage NOT IN ('closed_won', 'closed_lost')
+    )
+  )
+  FROM deals d
+  LEFT JOIN stage_weights sw ON sw.stage_name = d.stage
+  WHERE d.tenant_id = p_tenant_id
+    AND d.stage NOT IN ('closed_won', 'closed_lost')
+$$;
+
+-- ------------------------------------------------------------
+-- MATCH PATTERNS (RAG)
+-- Recherche vectorielle pour le contexte LLM.
+-- Appelée par rag.ts avant chaque appel LLM.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION match_patterns(
+  p_tenant_id   UUID,
+  p_embedding   vector(1536),
+  p_limit       INT DEFAULT 3,
+  p_min_score   INT DEFAULT 60
+)
+RETURNS TABLE (
+  content       TEXT,
+  result_score  INT,
+  agent_source  TEXT,
+  metadata      JSONB,
+  similarity    FLOAT
+)
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT
+    content,
+    result_score,
+    agent_source,
+    metadata,
+    1 - (embedding <=> p_embedding) AS similarity
+  FROM pattern_embeddings
+  WHERE tenant_id = p_tenant_id
+    AND result_score >= p_min_score
+  ORDER BY embedding <=> p_embedding
+  LIMIT p_limit
+$$;
+
+-- ------------------------------------------------------------
+-- ADS ACCOUNT AVERAGES
+-- Moyennes de performance pub pour détecter les anomalies.
+-- Appelée par A4.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_ads_account_averages(
+  p_tenant_id UUID,
+  p_platform  TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT json_build_object(
+    'avg_cpa',
+    COALESCE(AVG(cost_per_conversion) FILTER (
+      WHERE cost_per_conversion > 0
+    ), 0),
+    'avg_ctr',
+    COALESCE(AVG(ctr), 0),
+    'avg_roas',
+    COALESCE(AVG(roas) FILTER (WHERE roas > 0), 0),
+    'total_spend_30d',
+    COALESCE(SUM(spend), 0),
+    'total_conversions_30d',
+    COALESCE(SUM(conversions), 0)
+  )
+  FROM ad_campaigns
+  WHERE tenant_id = p_tenant_id
+    AND status = 'active'
+    AND snapshot_date >= CURRENT_DATE - 30
+    AND (p_platform IS NULL OR platform = p_platform)
+$$;
+
+-- ------------------------------------------------------------
+-- CURRENT BALANCE
+-- Appelée par Python Treasury.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_current_balance(p_tenant_id UUID)
+RETURNS NUMERIC
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT COALESCE(SUM(current_balance), 0)
+  FROM bank_accounts
+  WHERE tenant_id = p_tenant_id
+$$;
+
+-- ------------------------------------------------------------
+-- WEEKLY METRICS AGGREGATE
+-- Appelée par A6 pour construire le brief.
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION get_weekly_metrics(p_tenant_id UUID)
+RETURNS JSON
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT json_build_object(
+    'new_recommendations',
+    COUNT(*) FILTER (
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+    ),
+    'pending_recommendations',
+    COUNT(*) FILTER (WHERE status = 'pending'),
+    'approved_this_week',
+    COUNT(*) FILTER (
+      WHERE status IN ('approved', 'executed')
+      AND approved_at >= NOW() - INTERVAL '7 days'
+    ),
+    'rejected_this_week',
+    COUNT(*) FILTER (
+      WHERE status = 'rejected'
+      AND rejected_at >= NOW() - INTERVAL '7 days'
+    )
+  )
+  FROM recommendations
+  WHERE tenant_id = p_tenant_id
+$$;
+
+-- ------------------------------------------------------------
+-- PIPELINE SNAPSHOT (pour tendances)
+-- Stocke un snapshot hebdomadaire pour comparer semaine/semaine.
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pipeline_snapshots (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  snapshot_date   DATE NOT NULL DEFAULT CURRENT_DATE,
+  metrics         JSONB NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(tenant_id, snapshot_date)
+);
+
+ALTER TABLE pipeline_snapshots ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "pipeline_snapshots_read_own"
+  ON pipeline_snapshots FOR SELECT
+  USING (tenant_id = get_tenant_id());
