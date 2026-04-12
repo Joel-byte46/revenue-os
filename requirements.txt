@@ -19,7 +19,7 @@ pandas==2.2.0
 supabase==2.3.4
 
 # HTTP client async
-httpx==0.26.0
+httpx==0.25.2
 
 # Variables d'environnement
 python-dotenv==1.0.1
