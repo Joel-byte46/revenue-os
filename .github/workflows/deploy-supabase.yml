@@ -22,6 +22,9 @@ jobs:
         run: |
           curl -fsSL https://supabase.com/install.sh | sh
 
+      - name: Add Supabase to PATH
+      run: echo "$HOME/.supabase/bin" >> $GITHUB_PATH
+
       # 3. Lie le projet distant (Authentification non-interactive via Access Token)
       # Cette commande associe ton code local au vrai projet Supabase Cloud
       - name: Link to Supabase Project
