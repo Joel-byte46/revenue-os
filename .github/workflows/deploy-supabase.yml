@@ -4,61 +4,59 @@ name: Deploy Revenue OS to Supabase Cloud
 on:
   push:
     branches:
-      - main           # Se déclenche sur chaque push sur main
-  workflow_dispatch:    # Permet aussi de lancer manuellement depuis l'onglet "Actions" GitHub
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     name: Deploy Database + Edge Functions
-    
+
     steps:
-      # 1. Récupère le code du repository
+      # 1. Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Installe la CLI Supabase (gestionnaire officiel)
+      # 2. Install Supabase CLI (stable official version)
       - name: Install Supabase CLI
-        run: |
-          curl -fsSL https://supabase.com/install.sh | sh
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
-      - name: Add Supabase to PATH
-      run: echo "$HOME/.supabase/bin" >> $GITHUB_PATH
+      # 3. Debug: verify functions exist (important for silent failures)
+      - name: List Supabase functions
+        run: ls -R supabase/functions
 
-      # 3. Lie le projet distant (Authentification non-interactive via Access Token)
-      # Cette commande associe ton code local au vrai projet Supabase Cloud
+      # 4. Link Supabase project (non-interactive CI mode)
       - name: Link to Supabase Project
         run: |
           supabase link \
-            --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" \
-            --access-token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+            --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
         env:
-          # Important pour éviter les prompts interactifs en CI
+          SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
           SUPABASE_NO_UPDATE_NOTIFIER: true
 
-      # 4. Pousse les MIGRATIONS SQL (Schéma de base de données)
-      # Exécute tout fichier nouveau dans supabase/migrations/
+      # 5. Push database migrations
       - name: Push Database Migrations
         run: supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-      # 5. Déploie les EDGE FUNCTIONS (Code TypeScript/Deno)
-      # Compile et pousse les agents vers le runtime Supabase
+      # 6. Deploy ALL Edge Functions (fix principal)
       - name: Deploy Edge Functions
         run: |
-          supabase functions deploy \
-            --no-verify-jwt \        # Le JWT est géré par Supabase lui-même, 
-                                      # pas besoin de vérifier côté fonction pour le deploiement
+          supabase functions deploy --all \
+            --no-verify-jwt \
             --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
         env:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-      # 6. (Optionnel) Notification Slack si succès/échec
+      # 7. Success notification
       - name: Notify Success
         if: success()
         run: echo "🚀 Revenue OS deployed successfully to Supabase Cloud"
-      
+
+      # 8. Failure notification
       - name: Notify Failure
         if: failure()
-        run: echo "❌ Deployment failed. Check the logs above."
+        run: echo "❌ Deployment failed. Check logs above."
