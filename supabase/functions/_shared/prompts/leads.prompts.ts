@@ -239,8 +239,8 @@ export const FOLLOWUP_EMAIL_DAY4 = {
     senderName: string
     daysSinceEmail1: number
   }): string => {
-    const { lead, email1Subject, email1Body, ragContext, newValueToAdd, senderName } = params
-
+    const { lead, email1Subject, email1Body, ragContext, newValueToAdd, senderName: _senderName } = params
+    
     const newValueDescriptions = {
       case_study: "Un cas client concret dans leur industrie (résultat chiffré)",
       stat: "Une statistique récente et contre-intuitive sur leur secteur",
@@ -332,8 +332,8 @@ export const BREAKUP_EMAIL_DAY9 = {
     daysTotal: number
     probableReason: 'timing' | 'budget' | 'no_need' | 'competitor' | 'unknown'
   }): string => {
-    const { lead, email1Subject, email2Subject, senderName, daysTotal, probableReason } = params
-
+    const { lead, email1Subject, email2Subject, senderName: _senderName, daysTotal, probableReason } = params
+    
     const toneByReason = {
       timing: "Proposer de revenir à une date précise et fermer pour l'instant",
       budget: "Proposer une option d'entrée minimale ou de revenir quand le budget est disponible",
@@ -418,8 +418,8 @@ export const REENGAGEMENT_DORMANT = {
     triggerDetail: string | null
     senderName: string
   }): string => {
-    const { lead, ragContext, triggerReason, triggerDetail, senderName } = params
-
+    const { lead, ragContext, triggerReason, triggerDetail, senderName: _senderName } = params
+    
     const triggerFraming = {
       score_high: "Ce lead avait un score élevé mais n'a jamais avancé. Réengagement basé sur le potentiel.",
       company_news: `Nouvelle détectée sur l'entreprise : ${triggerDetail ?? 'changement récent'}`,
