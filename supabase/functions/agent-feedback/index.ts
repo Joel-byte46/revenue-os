@@ -211,7 +211,7 @@ interface OutcomeResult {
   // Pour le RAG
 }
 
-async function measureOutcome(
+function measureOutcome(
   supabase: ReturnType<typeof createClient>,
   tenantId: string,
   rec: Recommendation
