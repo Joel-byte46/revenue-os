@@ -173,7 +173,7 @@ serve(async (req: Request) => {
 // SYNC PROVIDER — Dispatcher
 // ------------------------------------------------------------
 
-async function syncProvider(
+function syncProvider(
   supabase: ReturnType<typeof createClient>,
   tenantId: string,
   provider: Provider,
