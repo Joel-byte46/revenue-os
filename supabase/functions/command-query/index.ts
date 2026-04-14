@@ -95,8 +95,8 @@ serve(async (req: Request) => {
     // --------------------------------------------------------
     // ÉTAPE 3 : Données supplémentaires selon la query
     // --------------------------------------------------------
-    let additionalData: Record<string, unknown> = {}
-
+    const additionalData: Record<string, unknown> = {}
+    
     if (/deal|pipeline/i.test(trimmedQuery)) {
       const { data: pipelineHealth } = await supabase
         .rpc('get_pipeline_health', { p_tenant_id: tenant_id })
