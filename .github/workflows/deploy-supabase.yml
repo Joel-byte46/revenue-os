@@ -19,7 +19,8 @@ jobs:
 
       # 2. Installe la CLI Supabase (gestionnaire officiel)
       - name: Install Supabase CLI
-        run: npm install -g supabase@">=1.100.0"
+        run: |
+          curl -fsSL https://supabase.com/install.sh | sh
 
       # 3. Lie le projet distant (Authentification non-interactive via Access Token)
       # Cette commande associe ton code local au vrai projet Supabase Cloud
