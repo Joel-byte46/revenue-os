@@ -17,6 +17,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Fix UUID before migration
+        run: bash fix-uuid.sh
+
+      - name: Push DB
+        run: supabase db push
+
       # 2. Install Supabase CLI (stable official version)
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
