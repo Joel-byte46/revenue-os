@@ -270,28 +270,28 @@ async function callPython<TRequest, TResponse>(
 // ------------------------------------------------------------
 
 // RUNWAY : Calcule le runway, burn, MRR, scénarios
-export async function calculateRunway(
+export function calculateRunway(
   request: RunwayRequest
 ): Promise<RunwayResponse> {
   return callPython<RunwayRequest, RunwayResponse>('/runway', request)
 }
 
 // ANOMALIES : Détecte les dépenses anormales (Z-score)
-export async function detectAnomalies(
+export function detectAnomalies(
   request: AnomalyRequest
 ): Promise<AnomalyResponse> {
   return callPython<AnomalyRequest, AnomalyResponse>('/anomalies', request)
 }
 
 // ZOMBIES : Détecte les abonnements non utilisés
-export async function detectZombies(
+export function detectZombies(
   request: ZombieRequest
 ): Promise<ZombieResponse> {
   return callPython<ZombieRequest, ZombieResponse>('/zombies', request)
 }
 
 // FORECAST : Pipeline forecast pondéré par probabilité
-export async function calculateForecast(
+export function calculateForecast(
   request: ForecastRequest
 ): Promise<ForecastResponse> {
   return callPython<ForecastRequest, ForecastResponse>('/forecast', request)
