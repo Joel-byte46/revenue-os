@@ -17,23 +17,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Fix UUID before migration
-        run: bash fix-uuid.sh
-
-      - name: Push DB
-        run: supabase db push
-
-      # 2. Install Supabase CLI (stable official version)
+      # 2. Install Supabase CLI (IMPORTANT: doit être en premier)
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      # 3. Debug: verify functions exist (important for silent failures)
-      - name: List Supabase functions
-        run: ls -R supabase/functions
+      # 3. Make scripts executable
+      - name: Prepare scripts
+        run: chmod +x fix-uuid.sh
 
-      # 4. Link Supabase project (non-interactive CI mode)
+      # 4. Fix SQL compatibility BEFORE DB push
+      - name: Fix UUID strategy
+        run: bash fix-uuid.sh
+
+      # 5. Link Supabase project
       - name: Link to Supabase Project
         run: |
           supabase link \
@@ -42,13 +40,17 @@ jobs:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
           SUPABASE_NO_UPDATE_NOTIFIER: true
 
-      # 5. Push database migrations
+      # 6. Push database migrations (ONLY HERE)
       - name: Push Database Migrations
         run: supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-      # 6. Deploy ALL Edge Functions (fix principal)
+      # 7. Debug functions structure
+      - name: List Supabase functions
+        run: ls -R supabase/functions
+
+      # 8. Deploy Edge Functions
       - name: Deploy Edge Functions
         run: |
           supabase functions deploy --all \
@@ -57,12 +59,12 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-      # 7. Success notification
+      # 9. Success notification
       - name: Notify Success
         if: success()
         run: echo "🚀 Revenue OS deployed successfully to Supabase Cloud"
 
-      # 8. Failure notification
+      # 10. Failure notification
       - name: Notify Failure
         if: failure()
         run: echo "❌ Deployment failed. Check logs above."
