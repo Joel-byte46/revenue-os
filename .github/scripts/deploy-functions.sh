@@ -2,6 +2,9 @@
 
 set -e
 
+export SUPABASE_ACCESS_TOKEN=$SUPABASE_ACCESS_TOKEN
+export SUPABASE_PROJECT_REF=$SUPABASE_PROJECT_REF
+
 FUNCTIONS=(
   orchestrator
   agent-ingestor
