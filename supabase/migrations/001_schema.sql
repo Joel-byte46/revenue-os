@@ -162,11 +162,6 @@ CREATE TABLE deals (
 );
 
 -- Colonne calculée : jours depuis la dernière activité
-ALTER TABLE deals
-  ADD COLUMN days_stagnant INT
-  GENERATED ALWAYS AS (
-    EXTRACT(DAY FROM NOW() - last_activity_at)::INT
-  ) STORED;
 
 CREATE INDEX idx_deals_tenant         ON deals(tenant_id);
 CREATE INDEX idx_deals_stage          ON deals(tenant_id, stage);
