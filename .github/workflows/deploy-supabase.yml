@@ -1,4 +1,3 @@
-# .github/workflows/deploy-supabase.yml
 name: Deploy Revenue OS to Supabase Cloud
 
 on:
@@ -17,15 +16,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Install Supabase CLI (IMPORTANT: doit être en premier)
+      # 2. Install Supabase CLI
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      # 3. Make scripts executable
+      # 3. Prepare scripts
       - name: Prepare scripts
-        run: chmod +x fix-uuid.sh
+        run: |
+          chmod +x fix-uuid.sh
+          chmod +x .github/scripts/deploy-functions.sh
 
       # 4. Fix SQL compatibility BEFORE DB push
       - name: Fix UUID strategy
@@ -40,7 +41,7 @@ jobs:
           SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
           SUPABASE_NO_UPDATE_NOTIFIER: true
 
-      # 6. Push database migrations (ONLY HERE)
+      # 6. Push database migrations
       - name: Push Database Migrations
         run: supabase db push
         env:
@@ -50,14 +51,11 @@ jobs:
       - name: List Supabase functions
         run: ls -R supabase/functions
 
-      # 8. Deploy Edge Functions
+      # 8. Deploy Edge Functions (FIXED)
       - name: Deploy Edge Functions
-        run: |
-          supabase functions deploy --all \
-            --no-verify-jwt \
-            --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+        run: bash .github/scripts/deploy-functions.sh
         env:
-          SUPABASE_ACCESS_TOKEN: "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
       # 9. Success notification
       - name: Notify Success
