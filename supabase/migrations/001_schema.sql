@@ -165,7 +165,6 @@ CREATE TABLE deals (
 
 CREATE INDEX idx_deals_tenant         ON deals(tenant_id);
 CREATE INDEX idx_deals_stage          ON deals(tenant_id, stage);
-CREATE INDEX idx_deals_stagnant       ON deals(tenant_id, days_stagnant DESC);
 CREATE INDEX idx_deals_amount         ON deals(tenant_id, amount DESC);
 CREATE INDEX idx_deals_contact        ON deals(tenant_id, contact_email);
 
