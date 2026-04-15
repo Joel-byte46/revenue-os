@@ -16,10 +16,11 @@ FUNCTIONS=(
   agent-feedback
 )
 
-for fn in "${FUNCTIONS[@]}"
-do
-  echo "Deploying $fn..."
-  supabase functions deploy "$fn" \
-    --no-verify-jwt \
-    --project-ref "$SUPABASE_PROJECT_REF"
+for func in "${FUNCTIONS[@]}"; do
+  echo "Deploying $func..."
+
+  supabase functions deploy "$func" \
+    --project-ref "$SUPABASE_PROJECT_REF" \
+    --no-verify-jwt
+
 done
