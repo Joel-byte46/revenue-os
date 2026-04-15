@@ -1,167 +1,136 @@
 -- ============================================================
 -- REVENUE OS — pg_cron SCHEDULES
--- Migration 004 : Orchestration temporelle
--- Toutes les heures en UTC. Ajuster selon timezone tenant
--- via l'orchestrateur (qui lit tenant.timezone).
+-- Migration 004 : Orchestration temporelle (PRODUCTION SAFE)
 -- ============================================================
 
--- Activer pg_cron (doit être activé dans Supabase dashboard)
--- Settings → Database → Extensions → pg_cron → Enable
-
 -- ------------------------------------------------------------
--- VARIABLE : URL de base des Edge Functions
--- Remplacer [PROJECT_REF] par ton ref Supabase réel
--- Remplacer [SERVICE_ROLE_KEY] par ta clé service_role réelle
--- Ces valeurs sont injectées via les secrets Supabase.
+-- EXTENSIONS REQUIRED
 -- ------------------------------------------------------------
 
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- IMPORTANT:
+-- pg_net est obligatoire pour net.http_post dans Supabase
+
 -- ------------------------------------------------------------
--- JOB 1 : CYCLE COMPLET
--- Toutes les 6 heures : sync + tous les agents
--- 00:00, 06:00, 12:00, 18:00 UTC
+-- NOTE ARCHITECTURE
 -- ------------------------------------------------------------
+-- ❌ NE PAS utiliser current_setting() pour secrets
+-- ✔ utiliser des secrets injectés côté Edge Function si besoin
+-- ✔ cron déclenche uniquement un call HTTP simple
+
+-- Base URL (à remplacer une seule fois ici)
+-- ⚠️ pas de secrets ici
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_settings WHERE name = 'app.edge_function_url'
+  ) THEN
+    PERFORM set_config(
+      'app.edge_function_url',
+      'https://YOUR_PROJECT_REF.supabase.co/functions/v1',
+      false
+    );
+  END IF;
+END $$;
+
+-- ------------------------------------------------------------
+-- HELPER FUNCTION (safe HTTP wrapper)
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION trigger_orchestrator(payload jsonb)
+RETURNS void
+LANGUAGE SQL
+AS $$
+  SELECT net.http_post(
+    url := current_setting('app.edge_function_url') || '/orchestrator',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json'
+    ),
+    body := payload
+  );
+$$;
+
+-- ============================================================
+-- JOB 1 : FULL CYCLE (6H)
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-full-cycle',
   '0 */6 * * *',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"full"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"full"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 2 : TREASURY QUOTIDIEN
--- Tous les jours à 07:00 UTC
--- Calcule le runway même si le cycle complet a déjà tourné
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 2 : TREASURY DAILY
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-treasury-daily',
   '0 7 * * *',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"treasury_only"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"treasury_only"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 3 : BRIEF HEBDOMADAIRE
--- Chaque lundi à 07:00 UTC
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 3 : WEEKLY BRIEF
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-weekly-brief',
   '0 7 * * 1',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"brief_only"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"brief_only"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 4 : FEEDBACK AGENT
--- Tous les jours à 03:00 UTC (faible trafic)
--- Mesure les outcomes des recommandations de 7-30 jours
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 4 : FEEDBACK LOOP
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-feedback-daily',
   '0 3 * * *',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"feedback_only"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"feedback_only"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 5 : SCHEDULED ACTIONS WORKER
--- Toutes les heures : exécute les actions planifiées
--- (follow-ups emails, notifications différées)
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 5 : SCHEDULED ACTIONS
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-scheduled-actions',
   '0 * * * *',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"scheduled_actions"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"scheduled_actions"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 6 : FX RATES REFRESH
--- Tous les jours à 06:00 UTC
--- Récupère les taux de change du jour
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 6 : FX RATES
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-fx-rates',
   '0 6 * * *',
-  $$
-  SELECT net.http_post(
-    url     := current_setting('app.edge_function_url') || '/orchestrator',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body    := '{"mode":"fx_rates"}'::jsonb
-  )
-  $$
+  $$ SELECT trigger_orchestrator('{"mode":"fx_rates"}'::jsonb); $$
 );
 
--- ------------------------------------------------------------
--- JOB 7 : EXPIRE OLD RECOMMENDATIONS
--- Tous les jours à 02:00 UTC
--- Passe en 'expired' les recommandations pending > 7 jours
--- ------------------------------------------------------------
+-- ============================================================
+-- JOB 7 : EXPIRE RECOMMENDATIONS
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-expire-recs',
   '0 2 * * *',
   $$
   UPDATE recommendations
-  SET status = 'expired', updated_at = NOW()
+  SET status = 'expired',
+      updated_at = NOW()
   WHERE status = 'pending'
-    AND expires_at < NOW()
+    AND expires_at < NOW();
   $$
 );
 
--- ------------------------------------------------------------
+-- ============================================================
 -- JOB 8 : CLEANUP SYNC JOBS
--- Tous les dimanches à 04:00 UTC
--- Supprime les sync_jobs terminés de plus de 30 jours
--- ------------------------------------------------------------
+-- ============================================================
 
 SELECT cron.schedule(
   'revenue-os-cleanup-sync-jobs',
@@ -169,28 +138,12 @@ SELECT cron.schedule(
   $$
   DELETE FROM sync_jobs
   WHERE status IN ('done', 'failed')
-    AND created_at < NOW() - INTERVAL '30 days'
+    AND created_at < NOW() - INTERVAL '30 days';
   $$
 );
 
--- ------------------------------------------------------------
--- CONFIGURATION DES SETTINGS
--- À exécuter après avoir remplacé les valeurs réelles
--- ------------------------------------------------------------
+-- ============================================================
+-- DEBUG QUERY (optional)
+-- ============================================================
 
--- ALTER DATABASE postgres
---   SET app.edge_function_url = 'https://[PROJECT_REF].supabase.co/functions/v1';
--- ALTER DATABASE postgres
---   SET app.service_role_key = '[SERVICE_ROLE_KEY]';
-
--- Ces deux commandes doivent être exécutées manuellement
--- dans le SQL Editor Supabase avec les vraies valeurs.
--- Ne pas committer les vraies valeurs dans le repo.
-
--- ------------------------------------------------------------
--- VÉRIFICATION : Lister les jobs actifs
--- ------------------------------------------------------------
-
--- SELECT jobname, schedule, active
--- FROM cron.job
--- ORDER BY jobname;
+-- SELECT * FROM cron.job ORDER BY jobname;
