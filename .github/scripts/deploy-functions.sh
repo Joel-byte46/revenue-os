@@ -1,9 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
+# -----------------------------
+# VALIDATION SECRETS
+# -----------------------------
+if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+  echo "❌ SUPABASE_ACCESS_TOKEN is missing"
+  exit 1
+fi
 
-export SUPABASE_ACCESS_TOKEN=$SUPABASE_ACCESS_TOKEN
-export SUPABASE_PROJECT_REF=$SUPABASE_PROJECT_REF
+if [ -z "${SUPABASE_PROJECT_REF:-}" ]; then
+  echo "❌ SUPABASE_PROJECT_REF is missing"
+  exit 1
+fi
+
+echo "🚀 Starting Edge Functions deployment..."
 
 FUNCTIONS=(
   orchestrator
@@ -16,11 +27,16 @@ FUNCTIONS=(
   agent-feedback
 )
 
-for func in "${FUNCTIONS[@]}"; do
-  echo "Deploying $func..."
+# -----------------------------
+# DEPLOY LOOP
+# -----------------------------
+for fn in "${FUNCTIONS[@]}"; do
+  echo "➡️ Deploying $fn..."
 
-  supabase functions deploy "$func" \
+  supabase functions deploy "$fn" \
     --project-ref "$SUPABASE_PROJECT_REF" \
     --no-verify-jwt
 
 done
+
+echo "✅ All functions deployed successfully."
