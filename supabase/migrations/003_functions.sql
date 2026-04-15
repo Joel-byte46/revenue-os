@@ -182,16 +182,40 @@ LANGUAGE SQL
 SECURITY DEFINER
 STABLE
 AS $$
+  WITH monthly AS (
+    SELECT
+      DATE_TRUNC('month', date) AS month_date,
+      ABS(SUM(amount)) AS total_expense
+    FROM transactions
+    WHERE tenant_id = p_tenant_id
+      AND type = 'expense'
+      AND date >= DATE_TRUNC('month', NOW() - (p_months || ' months')::INTERVAL)
+    GROUP BY DATE_TRUNC('month', date)
+  ),
+
+  breakdown AS (
+    SELECT
+      DATE_TRUNC('month', date) AS month_date,
+      COALESCE(category, 'unknown') AS category,
+      ABS(SUM(amount)) AS value
+    FROM transactions
+    WHERE tenant_id = p_tenant_id
+      AND type = 'expense'
+      AND date >= DATE_TRUNC('month', NOW() - (p_months || ' months')::INTERVAL)
+    GROUP BY DATE_TRUNC('month', date), category
+  )
+
   SELECT
-    TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month_label,
-    ABS(SUM(amount)) AS total_expense,
-    jsonb_object_agg(COALESCE(category,'unknown'), ABS(SUM(amount))) AS breakdown
-  FROM transactions
-  WHERE tenant_id = p_tenant_id
-    AND type = 'expense'
-    AND date >= DATE_TRUNC('month', NOW() - (p_months || ' months')::INTERVAL)
-  GROUP BY DATE_TRUNC('month', date)
-  ORDER BY DATE_TRUNC('month', date)
+    m.month_date::TEXT AS month_label,
+    m.total_expense,
+    (
+      SELECT jsonb_object_agg(b.category, b.value)
+      FROM breakdown b
+      WHERE b.month_date = m.month_date
+    ) AS breakdown
+
+  FROM monthly m
+  ORDER BY m.month_date;
 $$;
 
 -- ------------------------------------------------------------
