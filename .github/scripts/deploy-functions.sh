@@ -1,40 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# -----------------------------
-# VALIDATION SECRETS
-# -----------------------------
-if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-  echo "❌ SUPABASE_ACCESS_TOKEN is missing"
-  exit 1
-fi
+echo "🚀 Deploying Edge Functions..."
 
-if [ -z "${SUPABASE_PROJECT_REF:-}" ]; then
-  echo "❌ SUPABASE_PROJECT_REF is missing"
-  exit 1
-fi
+for path in supabase/functions/*; do
+  [ -d "$path" ] || continue
 
-echo "🚀 Starting Edge Functions deployment..."
+  fn=$(basename "$path")
 
-FUNCTIONS=(
-  orchestrator
-  agent-ingestor
-  agent-pipeline
-  agent-leads
-  agent-ads
-  agent-treasury
-  agent-brief
-  agent-feedback
-)
+  # ❌ skip internal / invalid folders
+  if [[ "$fn" == _* ]]; then
+    echo "⏭ skipping internal folder: $fn"
+    continue
+  fi
 
-# -----------------------------
-# DEPLOY LOOP
-# -----------------------------
-for fn in "${FUNCTIONS[@]}"; do
-  echo "➡️ Deploying $fn..."
+  # ❌ validation stricte Supabase naming rules
+  if [[ ! "$fn" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+    echo "⛔ invalid function name: $fn"
+    continue
+  fi
+
+  echo "➡️ deploying $fn..."
 
   supabase functions deploy "$fn" \
     --project-ref "$SUPABASE_PROJECT_REF" \
+    --no-verify-jwt
+
+done
+
+echo "✅ deployment complete"    --project-ref "$SUPABASE_PROJECT_REF" \
     --no-verify-jwt
 
 done
