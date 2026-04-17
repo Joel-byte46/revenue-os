@@ -195,5 +195,5 @@ async function sendActivationEmail(
 const error = await response.text()
 throw new Error(`Resend error: ${response.status} ${error}`)
 }
-    }
-  }
+}
+
