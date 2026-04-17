@@ -193,7 +193,7 @@ async function sendActivationEmail(
   })
   if (!response.ok) {
 const error = await response.text()
-throw new Error(Resend error: ${response.status} ${error})
+throw new Error('Resend error': ${response.status} ${error})
 }
     }
   }
