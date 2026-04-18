@@ -168,17 +168,10 @@ if (normalizedKey === 'REV-1234554321') {
   console.log('[MASTER] Bootstrap success')
 
   return new Response(
-    JSON.stringify({
-      success: true,
-      email: masterEmail,
-      tenant_id: tenantId,
-      magic_link: sessionData?.properties?.action_link ?? null,
-      redirect: '/dashboard',
-      message: 'Master access granted.'
-    }),
-    { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
-  )
-        }
+  JSON.stringify({ error: '...' }),
+  { status: 400 }
+)
+}
     // --------------------------------------------------------
     // ÉTAPE 1 : Vérifier la clé
     // --------------------------------------------------------
