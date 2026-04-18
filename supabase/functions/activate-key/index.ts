@@ -43,7 +43,6 @@ serve(async (req: Request) => {
 
       const masterEmail = 'tchoupe4466@gmail.com'
 
-      // 1️⃣ Vérifier si user existe
       const { data: usersData, error: listError } =
         await supabase.auth.admin.listUsers()
 
@@ -54,7 +53,6 @@ serve(async (req: Request) => {
 
       let user = usersData?.users?.find(u => u.email === masterEmail)
 
-      // 2️⃣ Si pas de user → créer
       if (!user) {
         const { data: createdUser, error: createError } =
           await supabase.auth.admin.createUser({
@@ -78,7 +76,6 @@ serve(async (req: Request) => {
 
       const userId = user.id
 
-      // 3️⃣ Vérifier si profile existe
       const { data: existingProfile } = await supabase
         .from('profiles')
         .select('tenant_id')
@@ -87,7 +84,6 @@ serve(async (req: Request) => {
 
       let tenantId: string
 
-      // 4️⃣ Si pas de profile → créer tenant + profile
       if (!existingProfile) {
         const { data: tenant, error: tenantError } = await supabase
           .from('tenants')
@@ -112,14 +108,15 @@ serve(async (req: Request) => {
 
         tenantId = tenant.id
 
+        // ✅ ✅ MODIFICATION ICI
+        // ❌ Suppression de `plan`
+        // ❌ Suppression de `plan_activated_at`
         const { error: profileError } = await supabase
           .from('profiles')
           .insert({
             id: userId,
             tenant_id: tenantId,
             role: 'owner',
-            plan: 'early_adopter',
-            plan_activated_at: new Date().toISOString(),
             onboarding_step: 1,
             onboarding_completed: false
           })
@@ -132,7 +129,6 @@ serve(async (req: Request) => {
         tenantId = existingProfile.tenant_id
       }
 
-      // 5️⃣ Générer magic link
       const { data: sessionData, error: sessionError } =
         await supabase.auth.admin.generateLink({
           type: 'magiclink',
@@ -221,12 +217,13 @@ serve(async (req: Request) => {
 
     const tenantId = tenant.id
 
+    // ✅ ✅ MODIFICATION ICI AUSSI
+    // ❌ Suppression de `plan`
+    // ❌ Suppression de `plan_activated_at`
     await supabase.from('profiles').insert({
       id: userId,
       tenant_id: tenantId,
       role: 'owner',
-      plan: accessKey.plan,
-      plan_activated_at: new Date().toISOString(),
       onboarding_step: 1,
       onboarding_completed: false
     })
@@ -268,4 +265,4 @@ function jsonError(message: string, status = 400) {
     JSON.stringify({ error: message }),
     { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
   )
-                  }
+      }
