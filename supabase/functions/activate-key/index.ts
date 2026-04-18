@@ -55,84 +55,130 @@ serve(async (req: Request) => {
         // --------------------------------------------------------
     // MASTER KEY (DEV OVERRIDE)
     // --------------------------------------------------------
-    if (normalizedKey === 'REV-1234554321') {
-      console.warn('[activate-key] MASTER KEY USED')
+    // --------------------------------------------------------
+// MASTER KEY (DEV OVERRIDE)
+// --------------------------------------------------------
+if (normalizedKey === 'REV-1234554321') {
+  console.warn('[activate-key] MASTER KEY USED')
 
-      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-      const devEmail = `dev-${crypto.randomUUID()}@revenue-os.ai`
+  const devEmail = `dev-${crypto.randomUUID()}@revenue-os.ai`
 
-      // Créer user directement
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email: devEmail,
-        password: crypto.randomUUID(),
-        email_confirm: true,
-        user_metadata: {
-          plan: 'early_adopter',
-          activated_at: new Date().toISOString(),
-          source: 'master_key'
-        }
-      })
-
-      if (authError || !authData.user) {
-        throw new Error(`Master key user creation failed: ${authError?.message}`)
-      }
-
-      const userId = authData.user.id
-
-      // Créer tenant
-      const { data: tenant } = await supabase
-        .from('tenants')
-        .insert({
-          name: 'Dev Tenant',
-          status: 'trial',
-          vertical: 'saas',
-          timezone: 'Europe/Paris',
-          currency: 'EUR',
-          settings: {
-            llm_model: 'gpt-4o',
-            auto_send_sequences: false
-          }
-        })
-        .select('id')
-        .single()
-
-      const tenantId = tenant!.id
-
-      // Créer profile
-      await supabase
-        .from('profiles')
-        .insert({
-          id: userId,
-          tenant_id: tenantId,
-          role: 'owner',
-          plan: 'early_adopter',
-          plan_activated_at: new Date().toISOString(),
-          onboarding_step: 1,
-          onboarding_completed: false
-        })
-
-      // Générer magic link
-      const { data: sessionData } = await supabase.auth.admin.generateLink({
-        type: 'magiclink',
-        email: devEmail,
-        options: {
-          redirectTo: `${Deno.env.get('APP_URL') ?? ''}/setup/intelligence`
-        }
-      })
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          email: devEmail,
-          tenant_id: tenantId,
-          magic_link: sessionData?.properties?.action_link ?? null,
-          redirect: '/setup/intelligence',
-          message: 'Master key activation.'
-        }),
-        { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
-      )
+  // --------------------------------------------------------
+  // 1. Créer user
+  // --------------------------------------------------------
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email: devEmail,
+    password: crypto.randomUUID(),
+    email_confirm: true,
+    user_metadata: {
+      plan: 'early_adopter',
+      activated_at: new Date().toISOString(),
+      source: 'master_key'
     }
+  })
+
+  if (authError || !authData?.user) {
+    console.error('[activate-key] Master key user creation failed:', authError?.message)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Master key activation failed. Try again.'
+      }),
+      { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const userId = authData.user.id
+
+  // --------------------------------------------------------
+  // 2. Créer tenant
+  // --------------------------------------------------------
+  const { data: tenant, error: tenantError } = await supabase
+    .from('tenants')
+    .insert({
+      name: 'Dev Tenant',
+      status: 'trial',
+      vertical: 'saas',
+      timezone: 'Europe/Paris',
+      currency: 'EUR',
+      settings: {
+        llm_model: 'gpt-4o',
+        auto_send_sequences: false
+      }
+    })
+    .select('id')
+    .single()
+
+  if (tenantError || !tenant) {
+    console.error('[activate-key] Master key tenant creation failed:', tenantError?.message)
+    // Rollback user
+    await supabase.auth.admin.deleteUser(userId)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Master key activation failed. Try again.'
+      }),
+      { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const tenantId = tenant.id
+
+  // --------------------------------------------------------
+  // 3. Créer profile
+  // --------------------------------------------------------
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .insert({
+      id: userId,
+      tenant_id: tenantId,
+      role: 'owner',
+      plan: 'early_adopter',
+      plan_activated_at: new Date().toISOString(),
+      onboarding_step: 1,
+      onboarding_completed: false
+    })
+
+  if (profileError) {
+    console.error('[activate-key] Master key profile creation failed:', profileError?.message)
+    await supabase.auth.admin.deleteUser(userId)
+    await supabase.from('tenants').delete().eq('id', tenantId)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Master key activation failed. Try again.'
+      }),
+      { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  // --------------------------------------------------------
+  // 4. Générer magic link
+  // --------------------------------------------------------
+  const { data: sessionData, error: sessionError } = await supabase.auth.admin.generateLink({
+    type: 'magiclink',
+    email: devEmail,
+    options: {
+      redirectTo: `${Deno.env.get('APP_URL') ?? ''}/setup/intelligence`
+    }
+  })
+
+  console.log(`[activate-key] Master key success: tenant=${tenantId}, user=${userId}`)
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      email: devEmail,
+      tenant_id: tenantId,
+      magic_link: sessionData?.properties?.action_link ?? null,
+      redirect: '/setup/intelligence',
+      message: 'Master key activation.'
+    }),
+    { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+  )
+      }
 
     // --------------------------------------------------------
     // ÉTAPE 1 : Vérifier la clé
