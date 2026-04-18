@@ -55,40 +55,108 @@ serve(async (req: Request) => {
         // --------------------------------------------------------
     // MASTER KEY (DEV OVERRIDE)
     // --------------------------------------------------------
-    // --------------------------------------------------------
 // --------------------------------------------------------
-// MASTER KEY (DEV OVERRIDE — PERSONAL ACCESS)
+// MASTER KEY (BOOTSTRAP ADMIN)
 // --------------------------------------------------------
 if (normalizedKey === 'REV-1234554321') {
   console.warn('[activate-key] MASTER KEY USED')
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
   const masterEmail = 'tchoupe4466@gmail.com'
 
   // --------------------------------------------------------
-  // Vérifier que le user existe
+  // 1. Vérifier si user existe
   // --------------------------------------------------------
-  const { data: users } = await supabase.auth.admin.listUsers({
-    email: masterEmail
-  })
+  let { data: userData } = await supabase.auth.admin.getUserByEmail(masterEmail)
+  let user = userData?.user
 
-  const user = users?.users?.find(u => u.email === masterEmail)
-
+  // --------------------------------------------------------
+  // 2. Si pas de user → le créer
+  // --------------------------------------------------------
   if (!user) {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: 'Master user not found in auth.'
-      }),
-      { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
-    )
+    const { data: createdUser, error: createError } =
+      await supabase.auth.admin.createUser({
+        email: masterEmail,
+        password: crypto.randomUUID(),
+        email_confirm: true,
+        user_metadata: {
+          plan: 'early_adopter',
+          activated_at: new Date().toISOString(),
+          source: 'master_key_bootstrap'
+        }
+      })
+
+    if (createError || !createdUser?.user) {
+      console.error('[MASTER] User creation failed:', createError)
+      return new Response(
+        JSON.stringify({ success: false, error: 'Failed to bootstrap admin.' }),
+        { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    user = createdUser.user
+  }
+
+  const userId = user.id
+
+  // --------------------------------------------------------
+  // 3. Vérifier si profile existe
+  // --------------------------------------------------------
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('tenant_id')
+    .eq('id', userId)
+    .maybeSingle()
+
+  let tenantId: string
+
+  // --------------------------------------------------------
+  // 4. Si pas de profile → créer tenant + profile
+  // --------------------------------------------------------
+  if (!existingProfile) {
+    const { data: tenant, error: tenantError } = await supabase
+      .from('tenants')
+      .insert({
+        name: 'Revenue OS',
+        status: 'trial',
+        vertical: 'saas',
+        timezone: 'Europe/Paris',
+        currency: 'EUR',
+        settings: {
+          llm_model: 'gpt-4o',
+          auto_send_sequences: false
+        }
+      })
+      .select('id')
+      .single()
+
+    if (tenantError || !tenant) {
+      console.error('[MASTER] Tenant creation failed:', tenantError)
+      return new Response(
+        JSON.stringify({ success: false, error: 'Failed to create tenant.' }),
+        { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    tenantId = tenant.id
+
+    await supabase.from('profiles').insert({
+      id: userId,
+      tenant_id: tenantId,
+      role: 'owner',
+      plan: 'early_adopter',
+      plan_activated_at: new Date().toISOString(),
+      onboarding_step: 1,
+      onboarding_completed: false
+    })
+  } else {
+    tenantId = existingProfile.tenant_id
   }
 
   // --------------------------------------------------------
-  // Générer magic link directement
+  // 5. Générer magic link
   // --------------------------------------------------------
-  const { data: sessionData, error: sessionError } =
+  const { data: sessionData } =
     await supabase.auth.admin.generateLink({
       type: 'magiclink',
       email: masterEmail,
@@ -97,14 +165,13 @@ if (normalizedKey === 'REV-1234554321') {
       }
     })
 
-  if (sessionError) {
-    console.error('[activate-key] Master key magic link failed:', sessionError)
-  }
+  console.log('[MASTER] Bootstrap success')
 
   return new Response(
     JSON.stringify({
       success: true,
       email: masterEmail,
+      tenant_id: tenantId,
       magic_link: sessionData?.properties?.action_link ?? null,
       redirect: '/dashboard',
       message: 'Master access granted.'
